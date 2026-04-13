@@ -1,0 +1,20 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+node_modules/
+.DS_Store
+
+# Static files
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Local settings
+.vscode/
+.idea/
+*.log

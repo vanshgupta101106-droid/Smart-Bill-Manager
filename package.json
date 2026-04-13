@@ -1,0 +1,10 @@
+{
+  "name": "smart-bill-manager",
+  "version": "1.0.0",
+  "scripts": {
+    "install:all": "npm install --prefix frontend && cd backend && python -m venv venv && venv\\Scripts\\activate && pip install -r requirements.txt",
+    "frontend": "npm --prefix frontend run dev",
+    "backend": "cd backend && venv\\Scripts\\activate && python main.py",
+    "dev": "npm run frontend"
+  }
+}
