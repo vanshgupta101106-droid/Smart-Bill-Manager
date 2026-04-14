@@ -1,4 +1,9 @@
 from fastapi import FastAPI
+from dotenv import load_dotenv
+import os
+
+# Load .env variables before anything else
+load_dotenv()
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.database import connect_to_mongo, close_mongo_connection
@@ -18,12 +23,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Smart Bill Manager Pro API", lifespan=lifespan)
 
-# Ensure uploads directory exists
-if not os.path.exists("uploads"):
-    os.makedirs("uploads")
+# Ensure absolute path for uploads to avoid 404s
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(os.path.dirname(BASE_DIR), "uploads")
 
-# Serve uploaded files
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+
+# Serve uploaded files reliably
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # Configure CORS
 app.add_middleware(

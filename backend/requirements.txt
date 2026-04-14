@@ -5,3 +5,12 @@ pydantic
 motor
 python-dotenv
 dnspython
+pytesseract
+Pillow
+PyMuPDF
+python-dateutil
+pyjwt
+passlib[bcrypt]
+bcrypt
+cloudinary
+google-generativeai
