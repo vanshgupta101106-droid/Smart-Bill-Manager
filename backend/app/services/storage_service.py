@@ -3,7 +3,6 @@ Storage Service — Handles file uploads to Cloudinary (production) or local dis
 Environment variables are loaded dynamically to avoid import-time issues.
 """
 import os
-import shutil
 from uuid import uuid4
 
 try:

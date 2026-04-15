@@ -4,10 +4,10 @@ import {
   Upload, Plus, FileText, Search, Filter, TrendingUp,
   Calendar, DollarSign, Tag, Loader2, Trash2, CheckCircle2,
   AlertCircle, X, Home, PieChart, Settings, Camera,
-  ChevronRight, ArrowUpRight, History, Download, Edit3, Save, MoreVertical
+  ChevronRight, ArrowUpRight, History, Download, Edit3, Save, MoreVertical, Percent
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
-import { auth, googleProvider, facebookProvider } from './firebase';
+import { auth, googleProvider } from './firebase';
 import { signInWithPopup, onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
 
 const API_URL = 'http://localhost:8000';
@@ -74,6 +74,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [showFilters, setShowFilters] = useState(false);
   const [analytics, setAnalytics] = useState(null);
+  const [billMode, setBillMode] = useState('purchase'); // 'purchase' or 'sale'
   
   // OCR processing state
   const [ocrProcessing, setOcrProcessing] = useState(false);
@@ -122,13 +123,24 @@ function App() {
     category: 'Others',
     company: '',
     date: new Date().toISOString().split('T')[0],
-    notes: ''
+    notes: '',
+    gst_rate: '',
+    gst_amount: ''
   });
   const [file, setFile] = useState(null);
 
   // Detail View State
   const [selectedBill, setSelectedBill] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
+
+  const handleGSTCalc = (rate, total) => {
+    if (!rate || !total || parseFloat(rate) === 0) return '0';
+    const r = parseFloat(rate);
+    const t = parseFloat(total);
+    if (isNaN(r) || isNaN(t)) return '0';
+    // GST Inclusive formula: GST = Total * (Rate / (100 + Rate))
+    return (t * (r / (100 + r))).toFixed(2);
+  };
 
   const debounceTimeout = useRef(null);
 
@@ -146,8 +158,8 @@ function App() {
         setUser(userData);
         setIsAuthenticated(true);
         localStorage.setItem('user', JSON.stringify(userData)); // Fix: persisted for interceptor
-        fetchBills(userData.id);
-        fetchAnalytics(userData.id);
+        fetchBills(userData.id, billMode);
+        fetchAnalytics(userData.id, billMode);
       } else {
         // Fallback for development/localStorage if Firebase not configured
         const savedUser = localStorage.getItem('user');
@@ -155,8 +167,8 @@ function App() {
            const userData = JSON.parse(savedUser);
            setUser(userData);
            setIsAuthenticated(true);
-           fetchBills(userData.id);
-           fetchAnalytics(userData.id);
+           fetchBills(userData.id, billMode);
+           fetchAnalytics(userData.id, billMode);
         } else {
            setIsAuthenticated(false);
            setUser(null);
@@ -166,6 +178,7 @@ function App() {
     });
 
     return () => unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -174,11 +187,13 @@ function App() {
     }
     debounceTimeout.current = setTimeout(() => {
       fetchBills();
+      fetchAnalytics();
     }, 500); // 500ms debounce for search/filter changes
     return () => clearTimeout(debounceTimeout.current);
-  }, [searchTerm, filters, user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, filters, user, billMode]);
 
-  const fetchBills = async (userId = user?.id) => {
+  const fetchBills = async (userId = user?.id, mode = billMode) => {
     if (!userId) return;
     setFetchingBills(true);
     try {
@@ -191,20 +206,22 @@ function App() {
       if (filters.endDate) params.append('end_date', filters.endDate);
       params.append('sort_by', filters.sortBy);
       params.append('sort_order', filters.sortOrder);
+      params.append('bill_type', mode);
       
       const response = await axios.get(`${API_URL}/bills/?${params.toString()}`);
       setBills(response.data);
-    } catch (error) {
+    } catch (err) {
+      console.error(err);
       toast.error("Failed to load bills");
     } finally {
       setFetchingBills(false);
     }
   };
 
-  const fetchAnalytics = async (userId = user?.id) => {
+  const fetchAnalytics = async (userId = user?.id, mode = billMode) => {
     if (!userId) return;
     try {
-      const res = await axios.get(`${API_URL}/bills/analytics/overview`);
+      const res = await axios.get(`${API_URL}/bills/analytics/overview?bill_type=${mode}`);
       setAnalytics(res.data);
     } catch (e) {
       console.error("Failed to fetch analytics", e);
@@ -225,6 +242,9 @@ function App() {
     if (formData.company) data.append('company', formData.company);
     if (formData.date) data.append('date', formData.date);
     if (formData.notes) data.append('notes', formData.notes);
+    if (formData.gst_rate) data.append('gst_rate', formData.gst_rate);
+    if (formData.gst_amount) data.append('gst_amount', formData.gst_amount);
+    data.append('bill_type', billMode);
 
     try {
       const res = await axios.post(`${API_URL}/bills/upload`, data);
@@ -269,14 +289,18 @@ function App() {
          company: selectedBill.company,
          category: selectedBill.category,
          date: selectedBill.date,
-         notes: selectedBill.notes
+         notes: selectedBill.notes,
+         bill_type: selectedBill.bill_type,
+         gst_rate: parseFloat(selectedBill.gst_rate || 0),
+         gst_amount: parseFloat(selectedBill.gst_amount || 0)
       });
       setSelectedBill(res.data);
       setIsEditing(false);
       toast.success("Bill updated successfully");
       fetchBills(); 
       fetchAnalytics();
-    } catch (e) {
+    } catch (err) {
+      console.error(err);
       toast.error("Update failed");
     } finally {
       setLoading(false);
@@ -291,7 +315,8 @@ function App() {
       setSelectedBill(null);
       fetchBills();
       fetchAnalytics();
-    } catch (error) {
+    } catch (err) {
+      console.error(err);
       toast.error("Delete failed");
     }
   };
@@ -302,6 +327,7 @@ function App() {
         if (filters.category && filters.category !== 'All') params.append('category', filters.category);
         if (filters.startDate) params.append('start_date', filters.startDate);
         if (filters.endDate) params.append('end_date', filters.endDate);
+        params.append('bill_type', billMode);
         
         // Use axios for auth headers instead of window.open
         const response = await axios.get(`${API_URL}/bills/export/csv?${params.toString()}`, {
@@ -316,7 +342,8 @@ function App() {
         link.remove();
         window.URL.revokeObjectURL(url);
         toast.success("Export complete!");
-     } catch(e) {
+     } catch(err) {
+        console.error(err);
         toast.error("Export failed");
      }
   };
@@ -339,18 +366,18 @@ function App() {
           localStorage.setItem('user', JSON.stringify(mockUser));
           setLoading(false);
           toast.success(`Signed in with ${provider} (Development)`);
-          fetchBills(mockUser.id);
-          fetchAnalytics(mockUser.id);
+          fetchBills(mockUser.id, billMode);
+          fetchAnalytics(mockUser.id, billMode);
         }, 1200);
         return;
     }
 
     // Real Firebase Social Login
     setLoading(true);
-    const authProvider = provider === 'google' ? googleProvider : facebookProvider;
+    const authProvider = googleProvider;
     
     signInWithPopup(auth, authProvider)
-      .then((result) => {
+      .then(() => {
          // onAuthStateChanged will handle the state update
          toast.success(`Successfully signed in with ${provider}`);
       })
@@ -371,14 +398,15 @@ function App() {
         setAnalytics(null); // Fix: clear analytics on logout
         localStorage.removeItem('user');
         toast.success("Signed out successfully");
-      } catch (e) {
+      } catch (err) {
+        console.error(err);
         toast.error("Sign out failed");
       }
     }
   };
 
   const resetForm = () => {
-    setFormData({ amount: '', category: 'Others', company: '', date: new Date().toISOString().split('T')[0], notes: '' });
+    setFormData({ amount: '', category: 'Others', company: '', date: new Date().toISOString().split('T')[0], notes: '', gst_rate: '', gst_amount: '' });
     setFile(null);
     setOcrResult(null);
   };
@@ -396,74 +424,36 @@ function App() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <h2 style={{ fontSize: '1.8rem', marginBottom: '8px' }}>Hello, {userSettings.name}</h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>Here is your spending summary</p>
-          </div>
-          <div style={{ width: '48px', height: '48px', background: 'var(--primary)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', fontWeight: '800' }}>
-            {userSettings.name[0]}
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>Managing your {billMode === 'purchase' ? 'Purchase' : 'Sales'} bills</p>
           </div>
         </div>
         
-        <div style={{ marginTop: '32px' }}>
-          <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '600' }}>Total Monthly Expense</p>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-            <span style={{ fontSize: '3rem', fontWeight: '800', background: 'linear-gradient(to right, var(--text), var(--primary-light))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              {userSettings.currencySymbol}{analytics ? analytics.total_amount.toLocaleString() : '0'}
-            </span>
+        <div style={{ marginTop: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '16px' }}>
+          <div>
+            <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '600' }}>Total {billMode === 'purchase' ? 'Expenses' : 'Revenue'}</p>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <span style={{ fontSize: '3rem', fontWeight: '800', background: 'linear-gradient(to right, var(--text), var(--primary-light))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                {userSettings.currencySymbol}{analytics ? analytics.total_amount.toLocaleString() : '0'}
+              </span>
+            </div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '600' }}>Total Documents</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'flex-end' }}>
+              <FileText size={20} color="var(--primary-light)" />
+              <span style={{ fontSize: '1.8rem', fontWeight: '700', color: 'var(--text)' }}>
+                {analytics ? analytics.total_bills : 0}
+              </span>
+            </div>
           </div>
         </div>
 
         <div style={{ marginTop: '24px', display: 'flex', gap: '12px' }}>
           <button className="btn-primary" style={{ padding: '12px 24px', flex: 1 }} onClick={() => setShowUpload(true)}>
-            <Plus size={18} /> Add New Bill
+            <Plus size={18} /> Add New {billMode === 'purchase' ? 'Purchase' : 'Sale'}
           </button>
         </div>
       </div>
-
-      {/* Stats Quick View */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px', marginBottom: '32px' }}>
-        <div className="glass premium-card" style={{ padding: '24px', display: 'flex', alignItems: 'center', gap: '20px' }}>
-          <div className="stat-icon" style={{ background: 'var(--success-glow)', color: 'var(--success)', margin: 0, width: '56px', height: '56px' }}>
-            <TrendingUp size={28} />
-          </div>
-          <div>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: '500', marginBottom: '2px' }}>Total Documents</p>
-            <h3 style={{ fontSize: '1.8rem' }}>{analytics ? analytics.total_bills : 0} Processed</h3>
-          </div>
-        </div>
-      </div>
-
-      {/* Category Explorer */}
-      <div style={{ marginBottom: '32px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <h3 style={{ fontSize: '1.2rem' }}>Quick Filters</h3>
-        </div>
-        <div className="hide-scrollbar" style={{ display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '8px' }}>
-          {categories.slice(0, 7).map(cat => (
-            <button
-              key={cat}
-              onClick={() => {
-                setFilters({ ...filters, category: cat });
-                setActiveTab('history');
-              }}
-              className="glass"
-              style={{
-                padding: '12px 24px',
-                whiteSpace: 'nowrap',
-                borderRadius: '100px',
-                color: filters.category === cat ? 'white' : 'var(--text)',
-                fontSize: '0.9rem',
-                fontWeight: '600',
-                transition: 'all 0.2s',
-                border: filters.category === cat ? '1px solid var(--primary)' : undefined,
-                background: filters.category === cat ? 'linear-gradient(135deg, var(--primary), var(--secondary))' : 'var(--surface-hover)'
-              }}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* Recent Activity */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
         <h3 style={{ fontSize: '1.2rem' }}>Recent Transactions</h3>
@@ -504,10 +494,7 @@ function App() {
   const renderHistory = () => (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-         <h2 style={{ fontSize: '1.8rem' }}>Transaction History</h2>
-         <button className="btn-secondary" onClick={handleExportCSV}>
-            <Download size={16}/> Export
-         </button>
+         <h2 style={{ fontSize: '1.8rem' }}>{billMode === 'purchase' ? 'Purchase' : 'Sales'} History</h2>
       </div>
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
@@ -678,7 +665,7 @@ function App() {
            <h3 style={{ fontSize: '1.1rem', marginBottom: '24px' }}>6-Month Spending Trend</h3>
            {monthEntries.length > 0 ? (
               <div className="chart-bar-container">
-                 {monthEntries.map(([month, total], i) => {
+                 {monthEntries.map(([month, total]) => {
                     const max = Math.max(...monthEntries.map(e => e[1]));
                     const heightPct = max > 0 ? Math.max((total / max) * 100, 5) : 5;
                     return (
@@ -727,13 +714,15 @@ function App() {
       <div className="animate-fade-in">
         <h2 style={{ fontSize: '1.8rem', marginBottom: '24px' }}>Preferences</h2>
 
-        <div className="glass premium-card" style={{ padding: '24px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '20px' }}>
-          <div style={{ width: '72px', height: '72px', background: 'linear-gradient(135deg, var(--primary), var(--secondary))', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem', fontWeight: '800', boxShadow: 'var(--shadow-glow)' }}>{userSettings.name[0]}</div>
+        <div className="glass premium-card" onClick={handleSignOut} style={{ padding: '24px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '20px', cursor: 'pointer' }}>
+          {user?.photo ? (
+            <img src={user.photo} alt="Profile" style={{ width: '72px', height: '72px', borderRadius: '50%', border: '2px solid var(--primary)', boxShadow: 'var(--shadow-glow)' }} />
+          ) : (
+            <div style={{ width: '72px', height: '72px', background: 'linear-gradient(135deg, var(--primary), var(--secondary))', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem', fontWeight: '800', boxShadow: 'var(--shadow-glow)' }}>{(user?.name || userSettings.name)[0]}</div>
+          )}
           <div>
-            <h3 style={{ fontSize: '1.4rem' }}>{userSettings.name}</h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
-               <CheckCircle2 size={14} color="var(--success)"/> Pro Account
-            </p>
+            <h3 style={{ fontSize: '1.4rem' }}>{user?.name || userSettings.name}</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>{user?.email || 'Logged in via Google'} (Click to Logout)</p>
           </div>
         </div>
 
@@ -827,15 +816,7 @@ function App() {
           </div>
         </div>
 
-        <button 
-          className="glass" 
-          style={{ width: '100%', marginTop: '32px', padding: '16px', border: '1px solid var(--accent)', color: 'var(--accent)', fontWeight: '600', borderRadius: 'var(--radius-lg)', transition: 'all 0.3s' }} 
-          onMouseOver={e=>e.target.style.background='rgba(244,63,94,0.1)'} 
-          onMouseOut={e=>e.target.style.background='transparent'}
-          onClick={handleSignOut}
-        >
-          Sign Out of Device
-        </button>
+        {/* Removed redundant sign out button as per user request */}
       </div>
     );
   };
@@ -861,10 +842,6 @@ function App() {
             )}
           </button>
 
-          <button className="btn-secondary" style={{ height: '56px', fontSize: '1.05rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }} onClick={() => handleLogin(null, 'facebook')} disabled={loading}>
-            <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M22 12c0-5.52-4.48-10-10-10S2 6.48 2 12c0 4.84 3.44 8.87 8 9.8V15H8v-3h2V9.5C10 7.57 11.57 6 13.5 6H16v3h-2c-.55 0-1 .45-1 1V12h3l-.5 3H13v6.8c4.56-.93 8-4.96 8-9.8z"/></svg>
-            Sign in with Facebook
-          </button>
         </div>
 
         <div style={{ textAlign: 'center', marginTop: '32px' }}>
@@ -891,7 +868,7 @@ function App() {
       }} />
 
       {/* Mobile Top Header */}
-      <header className="header">
+      <header className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {activeTab !== 'home' && (
             <button 
@@ -907,6 +884,58 @@ function App() {
           </div>
           <h1 style={{ fontSize: '1.6rem', letterSpacing: '-0.03em' }}>Smart Bill<span style={{color: 'var(--primary-light)'}}>.</span></h1>
         </div>
+
+        {/* Removed redundant profile info from header center */}
+
+        <div style={{ 
+          display: 'flex', 
+          background: 'var(--surface)', 
+          padding: '6px', 
+          borderRadius: '16px', 
+          border: '1px solid var(--glass-border)',
+          boxShadow: 'var(--shadow-lg)'
+        }}>
+          <button 
+            onClick={() => setBillMode('purchase')}
+            style={{ 
+              padding: '12px 28px', 
+              borderRadius: '12px', 
+              border: 'none', 
+              fontSize: '1rem', 
+              fontWeight: '800',
+              cursor: 'pointer',
+              transition: 'all 0.3s',
+              background: billMode === 'purchase' ? 'linear-gradient(135deg, #f43f5e, #fb7185)' : 'transparent',
+              color: billMode === 'purchase' ? 'white' : 'var(--text-muted)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              boxShadow: billMode === 'purchase' ? '0 4px 15px rgba(244, 63, 94, 0.4)' : 'none'
+            }}
+          >
+            <Download size={20} /> Purchase
+          </button>
+          <button 
+            onClick={() => setBillMode('sale')}
+            style={{ 
+              padding: '12px 28px', 
+              borderRadius: '12px', 
+              border: 'none', 
+              fontSize: '1rem', 
+              fontWeight: '800',
+              cursor: 'pointer',
+              transition: 'all 0.3s',
+              background: billMode === 'sale' ? 'linear-gradient(135deg, #10b981, #34d399)' : 'transparent',
+              color: billMode === 'sale' ? 'white' : 'var(--text-muted)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              boxShadow: billMode === 'sale' ? '0 4px 15px rgba(16, 185, 129, 0.4)' : 'none'
+            }}
+          >
+            <ArrowUpRight size={20} /> Sales
+          </button>
+        </div>
       </header>
 
       {/* Main Content Area */}
@@ -914,6 +943,7 @@ function App() {
         {activeTab === 'home' && renderHome()}
         {activeTab === 'history' && renderHistory()}
         {activeTab === 'insights' && renderInsights()}
+        {activeTab === 'gst' && renderGST(analytics, userSettings)}
         {activeTab === 'settings' && renderSettings()}
       </main>
 
@@ -922,7 +952,7 @@ function App() {
         <div className="modal-overlay" onClick={() => setShowUpload(false)}>
           <div className="glass modal-content premium-card" onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px', alignItems: 'center' }}>
-              <h3 style={{ fontSize: '1.5rem' }}>Upload Document</h3>
+              <h3 style={{ fontSize: '1.5rem' }}>Upload {billMode === 'purchase' ? 'Purchase' : 'Sale'} Bill</h3>
               <button onClick={() => setShowUpload(false)} style={{ background: 'var(--surface)', border: '1px solid var(--glass-border)', color: 'white', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' }} onMouseOver={e=>e.target.style.background='var(--surface-hover)'} onMouseOut={e=>e.target.style.background='var(--surface)'}>
                 <X size={20} />
               </button>
@@ -952,6 +982,8 @@ function App() {
                </div>
             ) : (
                <form onSubmit={handleUpload}>
+                 {/* Category selector removed as per user request (uses global mode) */}
+
                  <div
                    className={`dropzone ${file ? 'active' : ''} ${ocrProcessing ? 'processing' : ''}`}
                    onClick={() => document.getElementById('file-upload').click()}
@@ -1000,13 +1032,46 @@ function App() {
                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                      <div className="input-group">
                        <label>Amount ({userSettings.currencySymbol})</label>
-                       <input type="number" step="0.01" placeholder="Auto-Detect" value={formData.amount} onChange={(e) => setFormData({ ...formData, amount: e.target.value })} disabled={loading}/>
+                       <input type="number" step="0.01" placeholder="Auto-Detect" value={formData.amount} onChange={(e) => {
+                          const val = e.target.value;
+                          const gst = handleGSTCalc(formData.gst_rate, val);
+                          setFormData({ ...formData, amount: val, gst_amount: gst });
+                       }} disabled={loading}/>
                      </div>
                      <div className="input-group">
                        <label>Category</label>
                        <select value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} disabled={loading}>
                          {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                        </select>
+                     </div>
+                   </div>
+
+                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                     <div className="input-group">
+                       <label>GST Rate (%)</label>
+                       <input 
+                         type="number"
+                         step="0.01"
+                         placeholder="e.g. 5, 12, 18"
+                         value={formData.gst_rate} 
+                         onChange={(e) => {
+                           const rate = e.target.value;
+                           const gstAmt = handleGSTCalc(rate, formData.amount);
+                           setFormData({ ...formData, gst_rate: rate, gst_amount: gstAmt });
+                         }}
+                         disabled={loading}
+                       />
+                     </div>
+                     <div className="input-group">
+                       <label>GST Amount ({userSettings.currencySymbol})</label>
+                       <input 
+                         type="number" 
+                         step="0.01" 
+                         placeholder="Calculated" 
+                         value={formData.gst_amount} 
+                         onChange={(e) => setFormData({ ...formData, gst_amount: e.target.value })} 
+                         disabled={loading}
+                       />
                      </div>
                    </div>
                  </div>
@@ -1125,22 +1190,54 @@ function App() {
                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                         <div className="input-group">
                            <label>Amount</label>
-                           <input type="number" step="0.01" value={selectedBill.amount} onChange={e => setSelectedBill({...selectedBill, amount: e.target.value})} />
+                           <input type="number" step="0.01" value={selectedBill.amount} onChange={e => {
+                              const val = e.target.value;
+                              const gst = handleGSTCalc(selectedBill.gst_rate, val);
+                              setSelectedBill({...selectedBill, amount: val, gst_amount: gst});
+                           }} />
+                        </div>
+                        <div className="input-group">
+                           <label>GST Amount</label>
+                           <input type="number" step="0.01" value={selectedBill.gst_amount || 0} onChange={e => setSelectedBill({...selectedBill, gst_amount: e.target.value})} />
+                        </div>
+                     </div>
+
+                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                        <div className="input-group">
+                           <label>GST Rate (%)</label>
+                           <input 
+                              type="number"
+                              step="0.01"
+                              placeholder="e.g. 5, 12, 18"
+                              value={selectedBill.gst_rate || ''} 
+                              onChange={e => {
+                                 const rate = e.target.value;
+                                 const gst = handleGSTCalc(rate, selectedBill.amount);
+                                 setSelectedBill({...selectedBill, gst_rate: rate, gst_amount: gst});
+                              }}
+                           />
                         </div>
                         <div className="input-group">
                            <label>Date</label>
                            <input type="date" value={selectedBill.date} onChange={e => setSelectedBill({...selectedBill, date: e.target.value})} />
                         </div>
                      </div>
-                     <div className="input-group">
-                        <label>Category</label>
-                        <select value={selectedBill.category} onChange={e => setSelectedBill({...selectedBill, category: e.target.value})}>
-                           {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                     </div>
+                        <div className="input-group">
+                           <label>Category</label>
+                           <select value={selectedBill.category} onChange={e => setSelectedBill({...selectedBill, category: e.target.value})}>
+                              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                           </select>
+                        </div>
                      <div className="input-group">
                         <label>Notes</label>
                         <textarea value={selectedBill.notes || ''} onChange={e => setSelectedBill({...selectedBill, notes: e.target.value})} placeholder="Add custom notes..." />
+                     </div>
+                     <div className="input-group">
+                        <label>Bill Type</label>
+                        <select value={selectedBill.bill_type} onChange={e => setSelectedBill({...selectedBill, bill_type: e.target.value})}>
+                           <option value="purchase">Purchase</option>
+                           <option value="sale">Sale</option>
+                        </select>
                      </div>
                      <button className="btn-primary" onClick={updateBill} disabled={loading} style={{ height: '56px', marginTop: '16px' }}>
                         {loading ? <Loader2 className="animate-spin" /> : <><Save size={18}/> Save Changes</>}
@@ -1162,15 +1259,15 @@ function App() {
           History
         </div>
 
-        <div className="nav-item-center tooltip-wrapper" onClick={() => setShowUpload(true)}>
-          <Plus size={28} strokeWidth={3} />
-          <span className="tooltip-text" style={{ bottom: '130%' }}>New Scan</span>
+        <div className={`nav-item ${activeTab === 'gst' ? 'active' : ''}`} onClick={() => setActiveTab('gst')}>
+          <Percent size={22} style={{ marginBottom: activeTab === 'gst' ? '4px' : '2px', transition: 'all 0.2s' }} />
+          GST
         </div>
-
         <div className={`nav-item ${activeTab === 'insights' ? 'active' : ''}`} onClick={() => setActiveTab('insights')}>
           <PieChart size={22} style={{ marginBottom: activeTab === 'insights' ? '4px' : '2px', transition: 'all 0.2s' }} />
           Insights
         </div>
+        
         <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
           <Settings size={22} style={{ marginBottom: activeTab === 'settings' ? '4px' : '2px', transition: 'all 0.2s' }} />
           Settings
@@ -1179,5 +1276,81 @@ function App() {
     </div>
   );
 }
+
+const renderGST = (analytics, userSettings) => {
+  if (!analytics) return <div className="animate-fade-in"><div className="skeleton" style={{ height: '200px' }}></div></div>;
+
+  return (
+    <div className="animate-fade-in">
+       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+          <h2 style={{ fontSize: '1.8rem' }}>GST Dashboard</h2>
+          <div className="badge badge-primary" style={{ padding: '8px 16px' }}>FY 2026-27</div>
+       </div>
+
+       {/* GST Summary Cards */}
+       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px', marginBottom: '32px' }}>
+          <div className="glass premium-card" style={{ padding: '24px', position: 'relative', overflow: 'hidden' }}>
+             <div style={{ position: 'absolute', top: '-10px', right: '-10px', opacity: 0.1 }}>
+                <Percent size={120} />
+             </div>
+             <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', fontWeight: '700', textTransform: 'uppercase', marginBottom: '12px' }}>Net GST Liability</p>
+             <h1 style={{ fontSize: '3rem', color: analytics.net_gst_liability >= 0 ? 'var(--primary-light)' : 'var(--success)' }}>
+                {userSettings.currencySymbol}{Math.abs(analytics.net_gst_liability).toLocaleString()}
+             </h1>
+             <p style={{ marginTop: '8px', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                {analytics.net_gst_liability >= 0 ? 'Tax payable to government' : 'Tax credit available'}
+             </p>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+             <div className="glass" style={{ padding: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--success)', marginBottom: '8px' }}>
+                   <Download size={14} /> <span style={{ fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase' }}>Input GST</span>
+                </div>
+                <h3 style={{ fontSize: '1.4rem' }}>{userSettings.currencySymbol}{analytics.input_gst.toLocaleString()}</h3>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: '4px' }}>Tax on Purchases</p>
+             </div>
+             <div className="glass" style={{ padding: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--primary-light)', marginBottom: '8px' }}>
+                   <ArrowUpRight size={14} /> <span style={{ fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase' }}>Output GST</span>
+                </div>
+                <h3 style={{ fontSize: '1.4rem' }}>{userSettings.currencySymbol}{analytics.output_gst.toLocaleString()}</h3>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: '4px' }}>Tax on Sales</p>
+             </div>
+          </div>
+       </div>
+
+       <h3 style={{ fontSize: '1.2rem', marginBottom: '20px' }}>Tax Statistics</h3>
+       <div className="glass" style={{ padding: '24px', marginBottom: '32px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+             <span style={{ color: 'var(--text-muted)' }}>Total Managed Turnover</span>
+             <span style={{ fontWeight: '700' }}>{userSettings.currencySymbol}{analytics.total_amount.toLocaleString()}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+             <span style={{ color: 'var(--text-muted)' }}>GST Collected ({analytics.total_bills} bills)</span>
+             <span style={{ fontWeight: '700' }}>{userSettings.currencySymbol}{analytics.total_gst_amount.toLocaleString()}</span>
+          </div>
+          <div style={{ borderTop: '1px dashed var(--glass-border)', paddingTop: '20px', display: 'flex', justifyContent: 'space-between' }}>
+             <span style={{ fontWeight: '700' }}>Effective Tax Rate</span>
+             <span style={{ fontWeight: '800', color: 'var(--primary-light)' }}>
+                {analytics.total_amount > 0 ? ((analytics.total_gst_amount / analytics.total_amount) * 100).toFixed(2) : 0}%
+             </span>
+          </div>
+       </div>
+
+       <div className="glass" style={{ padding: '24px', background: 'rgba(99, 102, 241, 0.05)', border: '1px solid var(--primary-glow)' }}>
+          <h4 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+             <AlertCircle size={18} color="var(--primary-light)" /> Smart Tax Insight
+          </h4>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+             Your net liability is {userSettings.currencySymbol}{Math.abs(analytics.net_gst_liability).toLocaleString()}. 
+             {analytics.net_gst_liability > 0 
+                ? " Plan your payments before the 20th of next month to avoid penalties." 
+                : " You have excess credit which can be carried forward."}
+          </p>
+       </div>
+    </div>
+  );
+};
 
 export default App;

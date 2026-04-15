@@ -49,17 +49,17 @@ html {
 }
 
 body.light {
-  --background: #f8fafc;
+  --background: #f1f5f9;
   --surface: #ffffff;
-  --surface-hover: #f1f5f9;
+  --surface-hover: #f8fafc;
   --surface-active: #e2e8f0;
-  --text: #0f172a;
-  --text-secondary: #334155;
-  --text-muted: #64748b;
-  --text-dim: #94a3b8;
-  --glass: rgba(255, 255, 255, 0.8);
-  --glass-border: rgba(0, 0, 0, 0.08);
-  --glass-border-hover: rgba(0, 0, 0, 0.15);
+  --text: #020617;
+  --text-secondary: #1e293b;
+  --text-muted: #475569;
+  --text-dim: #64748b;
+  --glass: rgba(255, 255, 255, 0.9);
+  --glass-border: rgba(0, 0, 0, 0.12);
+  --glass-border-hover: rgba(0, 0, 0, 0.2);
   background-image: 
     radial-gradient(ellipse at 0% 0%, rgba(99, 102, 241, 0.05) 0px, transparent 55%),
     radial-gradient(ellipse at 100% 100%, rgba(168, 85, 247, 0.04) 0px, transparent 55%);
@@ -277,7 +277,7 @@ h1, h2, h3, h4, h5, h6 {
   left: 0;
   right: 0;
   height: var(--nav-height);
-  background: rgba(11, 15, 26, 0.92);
+  background: var(--glass);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border-top: 1px solid var(--glass-border);
@@ -320,31 +320,6 @@ h1, h2, h3, h4, h5, h6 {
   border-radius: 0 0 4px 4px;
 }
 
-.nav-item-center {
-  background: linear-gradient(135deg, var(--primary), var(--secondary));
-  width: 56px;
-  height: 56px;
-  border-radius: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  margin-top: -30px;
-  box-shadow: 0 8px 24px var(--primary-glow);
-  transition: all 0.3s;
-  cursor: pointer;
-}
-
-.nav-item-center:hover {
-  transform: scale(1.05);
-  box-shadow: 0 12px 32px var(--primary-glow);
-}
-
-.nav-item-center:active {
-  transform: scale(0.9) rotate(5deg);
-}
-
-/* ═══════════════════════════════════════════════
    FORMS
    ═══════════════════════════════════════════════ */
 .input-group label {

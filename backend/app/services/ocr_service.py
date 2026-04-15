@@ -6,7 +6,6 @@ import os
 import re
 import json
 import io
-from typing import Optional
 
 try:
     import google.generativeai as genai

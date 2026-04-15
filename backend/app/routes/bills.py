@@ -2,7 +2,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, Dep
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 from app.database import get_database
-from app.schemas.bill import BillResponse, BillCreate, BillUpdate, AnalyticsResponse
+from app.schemas.bill import BillResponse, BillUpdate, AnalyticsResponse
 from app.services.storage_service import StorageService
 from app.services.ocr_service import OCRService
 from datetime import datetime
@@ -38,6 +38,9 @@ async def upload_bill(
     company: str = Form(None),
     date: str = Form(None),
     notes: str = Form(None),
+    bill_type: str = Form("purchase"),
+    gst_rate: Optional[float] = Form(0.0),
+    gst_amount: Optional[float] = Form(0.0),
     current_user: str = Depends(get_current_user),
 ):
     """Upload a bill with optional file. Runs AI OCR if file provided and details missing."""
@@ -79,9 +82,12 @@ async def upload_bill(
         "company": company,
         "date": date,
         "notes": notes or "",
+        "bill_type": bill_type,
         "upload_time": datetime.now(),
         "ocr_text": ocr_text,
         "ocr_confidence": ocr_confidence,
+        "gst_rate": float(gst_rate or 0.0),
+        "gst_amount": float(gst_amount or 0.0),
         "user_id": current_user,
     }
 
@@ -110,6 +116,7 @@ async def list_bills(
     sort_order: Optional[str] = Query("desc", description="Sort order: asc or desc"),
     limit: int = Query(500, ge=1, le=1000),
     skip: int = Query(0, ge=0),
+    bill_type: Optional[str] = Query(None, description="Filter by bill type: sale or purchase"),
     current_user: str = Depends(get_current_user),
 ):
     """
@@ -122,6 +129,9 @@ async def list_bills(
 
     # Build MongoDB query
     query = {"user_id": current_user}
+
+    if bill_type:
+        query["bill_type"] = bill_type
 
     if search:
         query["$or"] = [
@@ -216,7 +226,10 @@ async def delete_bill(bill_id: str, current_user: str = Depends(get_current_user
 
 # ─── Analytics ────────────────────────────────────────────────
 @router.get("/analytics/overview", response_model=AnalyticsResponse)
-async def get_analytics(current_user: str = Depends(get_current_user)):
+async def get_analytics(
+    bill_type: Optional[str] = Query(None, description="Filter analytics by bill type"),
+    current_user: str = Depends(get_current_user)
+):
     """
     Get comprehensive spending analytics for the authenticated user:
     - Total bills & amount
@@ -229,7 +242,11 @@ async def get_analytics(current_user: str = Depends(get_current_user)):
     if db is None:
         raise HTTPException(status_code=503, detail="Database not connected.")
 
-    bills = await db.bills.find({"user_id": current_user}).to_list(5000)
+    query = {"user_id": current_user}
+    if bill_type:
+        query["bill_type"] = bill_type
+
+    bills = await db.bills.find(query).to_list(5000)
 
     if not bills:
         return AnalyticsResponse(
@@ -241,6 +258,10 @@ async def get_analytics(current_user: str = Depends(get_current_user)):
             top_merchants=[],
             highest_bill=None,
             lowest_bill=None,
+            total_gst_amount=0.0,
+            input_gst=0.0,
+            output_gst=0.0,
+            net_gst_liability=0.0,
         )
 
     total_amount = sum(float(b.get("amount", 0)) for b in bills)
@@ -301,6 +322,14 @@ async def get_analytics(current_user: str = Depends(get_current_user)):
         "category": lowest.get("category", "Others"),
     } if lowest else None
 
+    # GST Analytics (Global for user)
+    all_user_bills = await db.bills.find({"user_id": current_user}).to_list(10000)
+    input_gst = sum(float(b.get("gst_amount", 0)) for b in all_user_bills if b.get("bill_type") == "purchase")
+    output_gst = sum(float(b.get("gst_amount", 0)) for b in all_user_bills if b.get("bill_type") == "sale")
+    
+    # Current view GST (for the filtered list)
+    current_total_gst = sum(float(b.get("gst_amount", 0)) for b in bills)
+
     return AnalyticsResponse(
         total_bills=len(bills),
         total_amount=round(total_amount, 2),
@@ -310,6 +339,10 @@ async def get_analytics(current_user: str = Depends(get_current_user)):
         top_merchants=top_merchants,
         highest_bill=highest_bill,
         lowest_bill=lowest_bill,
+        total_gst_amount=round(current_total_gst, 2),
+        input_gst=round(input_gst, 2),
+        output_gst=round(output_gst, 2),
+        net_gst_liability=round(output_gst - input_gst, 2),
     )
 
 
@@ -319,6 +352,7 @@ async def export_csv(
     category: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    bill_type: Optional[str] = Query(None),
     current_user: str = Depends(get_current_user),
 ):
     """Export bills as a CSV file. Supports optional category and date filters."""
@@ -327,6 +361,8 @@ async def export_csv(
         raise HTTPException(status_code=503, detail="Database not connected.")
 
     query = {"user_id": current_user}
+    if bill_type:
+        query["bill_type"] = bill_type
     if category and category != "All":
         query["category"] = category
     if start_date or end_date:

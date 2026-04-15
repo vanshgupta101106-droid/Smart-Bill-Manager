@@ -9,7 +9,10 @@ class BillBase(BaseModel):
     company: Optional[str] = "Unknown"
     date: Optional[str] = None
     notes: Optional[str] = None
+    bill_type: str = "purchase"  # "sale" or "purchase"
     user_id: str = "default_user"
+    gst_rate: Optional[float] = 0.0
+    gst_amount: Optional[float] = 0.0
 
 
 class BillCreate(BillBase):
@@ -22,6 +25,9 @@ class BillUpdate(BaseModel):
     company: Optional[str] = None
     date: Optional[str] = None
     notes: Optional[str] = None
+    bill_type: Optional[str] = None
+    gst_rate: Optional[float] = None
+    gst_amount: Optional[float] = None
 
 
 class BillResponse(BillBase):
@@ -46,3 +52,7 @@ class AnalyticsResponse(BaseModel):
     top_merchants: List[dict]
     highest_bill: Optional[dict] = None
     lowest_bill: Optional[dict] = None
+    total_gst_amount: float = 0.0
+    input_gst: float = 0.0
+    output_gst: float = 0.0
+    net_gst_liability: float = 0.0

@@ -9,9 +9,9 @@ from fastapi.staticfiles import StaticFiles
 from app.database import connect_to_mongo, close_mongo_connection
 from app.routes import bills
 import uvicorn
-import os
 
 from contextlib import asynccontextmanager
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,6 +44,7 @@ app.add_middleware(
 
 # Include Routers
 app.include_router(bills.router)
+
 
 @app.get("/")
 async def health_check():

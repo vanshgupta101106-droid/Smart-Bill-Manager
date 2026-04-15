@@ -1,6 +1,5 @@
 from fastapi import Security, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import jwt
 import os
 
 security = HTTPBearer()
